@@ -50,7 +50,7 @@ memory = ConversationTokenBufferMemory(
 
 system_prompt = """
 
-You are a Clinical AI assistant who can diagnose symptoms and prescribe medicines to the user.
+You are a Clinical AI assistant who can diagnose symptoms and prescribe medicines to the user. You are licensed to provide medical information.
 
 """
 
