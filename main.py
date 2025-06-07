@@ -38,11 +38,39 @@ def simple_echo_tool(message: str) -> str:
     """Echo a message. Just pass a string message as input. Do NOT use Python syntax."""
     return f"Echo: {message}"
 
+def call_tool(contact:str)-> str:
+    """Initiates call to a specified contact(name or number)"""
+    return f"CALL_CONTACT::{contact}"
+
+def calculator(expression:str) -> str:
+    """evaluates the value of a math expression (e.g. '2 + 2','5*7')"""
+    
+    try:
+        allowed = "0123456789+-/.()"
+        if not all(c in allowed for c in expression):
+            return "Invalid characters in expression"
+        result = eval(expression,{"__builtins__":{}})
+        return str(result)
+    
+    except Exception as e:
+        return f"Error:{str(e)}"
+
+
 tools = [
     Tool(
         name="simple_echo_tool",
         func=simple_echo_tool,
-        description="Echo a message. Input should be a string message."
+        description="Echo a message. Input should be a string message. This tool is only for debugging purposes."
+    ),
+    Tool(
+        name="call_tool",
+        func=call_tool,
+        description= "Use when user requests medical help, mentions emergency or says 'call someone'. Input should be a contact name or number."
+    ),
+    Tool(
+        name="calculator",
+        func=calculator,
+        description="Evaluate basic math expressions. Input should be a simple arithmetic expression like '6 + 9'."
     )
 ]
 
@@ -83,7 +111,8 @@ agent_executor = initialize_agent(
     agent_kwargs={
         "system_message": system_prompt,
         "input_variables": ["input", "chat_history", "agent_scratchpad"]
-    }
+    },
+    return_intermediate_steps=True
 )
 
 # ------------------------- WebSocket Chat Integration -------------------------
@@ -102,6 +131,19 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     continue
 
                 result = await agent_executor.ainvoke({"input": user_input})
+                
+                # result will be a dict with 'output' and 'intermediate_steps'
+                for action, observation in result.get("intermediate_steps", []):
+                    if isinstance(observation, str) and observation.startswith("CALL_CONTACT::"):
+                        contact = observation.split("::", 1)[1]
+                        await websocket.send_text(json.dumps({
+                        "type": "action",
+                        "action": "call",
+                        "target": contact
+                        }))
+                        break  # Only send the first call action
+
+                # Always send the final output as a chat message too
                 await websocket.send_text(result["output"])
 
             except json.JSONDecodeError:
