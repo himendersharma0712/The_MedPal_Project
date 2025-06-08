@@ -42,35 +42,83 @@ def call_tool(contact:str)-> str:
     """Initiates call to a specified contact(name or number)"""
     return f"CALL_CONTACT::{contact}"
 
-def calculator(expression:str) -> str:
-    """evaluates the value of a math expression (e.g. '2 + 2','5*7')"""
-    
+def bmi_calculator(height_and_weight: str) -> str:
+    """Evaluates the BMI using height (cm, m, or ft+in) and weight (kg).
+    Examples:
+    - '170cm 60kg'
+    - '1.7m 60kg'
+    - '5ft 7in 60kg'
+    - '5'7\" 60kg'
+    """
+
     try:
-        allowed = "0123456789+-/.()"
-        if not all(c in allowed for c in expression):
-            return "Invalid characters in expression"
-        result = eval(expression,{"__builtins__":{}})
-        return str(result)
-    
+        import re
+
+        text = height_and_weight.lower().replace("’", "'").replace("″", "in")
+
+        # Extract weight
+        weight_match = re.search(r'(\d+\.?\d*)\s*kg', text)
+        if not weight_match:
+            return "Please include your weight in kilograms like '60kg'."
+        weight = float(weight_match.group(1))
+
+        height = None
+
+        # Check for cm or m
+        metric_match = re.search(r'(\d+\.?\d*)\s*(cm|m)', text)
+        if metric_match:
+            value = float(metric_match.group(1))
+            unit = metric_match.group(2)
+            height = value / 100 if unit == "cm" else value
+
+        # Check for ft and in formats
+        elif "ft" in text or "'" in text:
+            # Patterns like 5ft 7in or 5'7"
+            ft_in_match = re.search(r'(\d+)\s*(?:ft|\'|feet)[\s]*((\d+)?\s*(?:in|\"))?', text)
+            if ft_in_match:
+                feet = int(ft_in_match.group(1))
+                inches = int(ft_in_match.group(3)) if ft_in_match.group(3) else 0
+                total_inches = feet * 12 + inches
+                height = total_inches * 0.0254  # convert to meters
+
+        if not height:
+            return "Please provide a valid height like '170cm', '5ft 8in', or '1.7m'."
+
+        # Calculate BMI
+        bmi = weight / (height ** 2)
+
+        # Status
+        if bmi < 18.5:
+            status = "Underweight"
+        elif 18.5 <= bmi < 25:
+            status = "Normal"
+        elif 25 <= bmi < 30:
+            status = "Overweight"
+        else:
+            status = "Obese"
+
+        return f"Your BMI is {bmi:.2f} ({status})."
+
     except Exception as e:
-        return f"Error:{str(e)}"
+        return f"Error: {str(e)}"
+
 
 
 tools = [
     Tool(
         name="simple_echo_tool",
         func=simple_echo_tool,
-        description="Echo a message. Input should be a string message. This tool is only for debugging purposes."
+        description="Echo a message. Input should be a string message. This tool is ONLY for debugging purposes."
     ),
     Tool(
         name="call_tool",
         func=call_tool,
-        description= "Use when user requests medical help, mentions emergency or says 'call someone'. Input should be a contact name or number."
+        description= "This tool is ONLY used to make a phone call. Use when user requests medical help, mentions emergency or says 'call someone'. Input should be a contact name or number."
     ),
     Tool(
-        name="calculator",
-        func=calculator,
-        description="Evaluate basic math expressions. Input should be a simple arithmetic expression like '6 + 9'."
+        name="bmi_calculator",
+        func=bmi_calculator,
+        description="Evaluates BMI of the user from height(in ft or cm or m) and weight(in kg). Use only if user asks for Body Mass Index(BMI)."
     )
 ]
 
@@ -94,9 +142,35 @@ memory = ConversationTokenBufferMemory(
 # ------------------------- System Prompt -------------------------
 system_prompt = """
 
-You are a Clinical AI assistant. Licensed to provide medical information.
-Use tools when appropriate. Always prioritize patient safety. 
-Don't use special characters like '*'. 
+You are Aidra, a helpful, empathetic, and intelligent physician with advanced knowledge in internal medicine, diagnostics, and pharmacology. You assume the role of a licensed physician who can suggest diagnoses, recommend treatments, and prescribe medications for a wide range of common and non-critical conditions. 
+You do not perform surgery or dental procedures.
+While you have the authority to suggest medications, always include a disclaimer reminding the user to consult a real doctor — especially since you are communicating through a phone interface.
+You have access to helpful tools which can assist the user. For example, you can use a tool to call emergency services (dial '112') if the user describes life-threatening symptoms.
+You can discuss chronic conditions (e.g., diabetes, hypertension), identify symptom patterns, and suggest next steps for health management. For serious or complex medical cases, always recommend consultation with the nearest healthcare provider.
+
+Note: You respond in short, to-the-point sentences and use long sentences only when absolutely necessary.
+
+
+Don't follow this word to word just use the format: 
+"An example conversation for tone setting:\nUser: What are some medications I can take for a mild fever?\nAidra: 🌡️ I understand you're experiencing a mild fever. Let's go over some options.\n\n💊 Recommended: Acetaminophen (Tylenol)\n\n📏 Dosage: 500–650mg every 4–6 hours as needed\n\n⏳ Duration: Typically for 3–4 days\n\n⚠️ Side Effects: Nausea 🤢, drowsiness 😴, and rarely liver damage 🧬 if overdosed\n\n🛑 Please consult a licensed physician before taking any medication.\n\n❓ Do you have any other symptoms along with the fever?"
+
+When offering medication advice:
+- Clearly mention the **drug name**
+- Provide an appropriate **dosage range** (e.g., "500mg every 6–8 hours")
+- Specify the **duration** (e.g., "for 3–5 days")
+- List **common side effects** (if known)
+- Include a **disclaimer**: "Please consult a licensed physician before taking any medication."
+
+Your tone should always be:
+- Calm, supportive, and professional
+- Reassuring but cautious
+- Respectful of boundaries, and never alarmist
+
+You care about the user's health and speak with empathy, as if their well-being truly matters to you.
+
+Note: In urgent or serious scenarios (e.g., chest pain, shortness of breath, high fever, injury), advise the user to immediately contact emergency medical services or visit a hospital.
+
+You don't use '**' but can use emojis.
 
 """
 
@@ -109,7 +183,7 @@ agent_executor = initialize_agent(
     memory=memory,
     handle_parsing_errors=True,
     agent_kwargs={
-        "system_message": system_prompt,
+        "prefix": system_prompt.strip(),
         "input_variables": ["input", "chat_history", "agent_scratchpad"]
     },
     return_intermediate_steps=True
