@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Dict
-
+import cv2
+import pytesseract
 from langchain_ollama.chat_models import ChatOllama
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.memory import ConversationTokenBufferMemory
@@ -13,6 +14,8 @@ from langchain.tools import tool
 from langchain.agents import initialize_agent
 from langchain.tools import Tool
 from langchain.agents import AgentType
+import numpy as np
+from pdf2image import convert_from_bytes
 
 UPLOAD_DIR = "uploaded_files"
 
@@ -102,23 +105,55 @@ def bmi_calculator(height_and_weight: str) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
+def read_medical_report(query:str)->str:
+    """Checks for uploaded medical reports and returns their raw content. 
+    Use when user asks 'check my report' or similar."""
+    
+    # Get latest file
+    files = os.listdir(UPLOAD_DIR)
+    if not files:
+        return "ERROR: No reports found. Please upload your document first."
+    
+    latest_file = max(files, key=lambda f: os.path.getctime(os.path.join(UPLOAD_DIR, f)))
+    file_path = os.path.join(UPLOAD_DIR, latest_file)
+    
+    try:
+        if latest_file.lower().endswith('.pdf'):
+            images = convert_from_bytes(open(file_path, 'rb').read())
+        else:
+            images = [cv2.imread(file_path)]
 
+        extracted_text = ""
+        for img in images:
+            gray = cv2.cvtColor(np.array(img), cv2.COLOR_BGR2GRAY)
+            thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            extracted_text += pytesseract.image_to_string(thresh) + "\n"
+            
+            return f"MEDICAL_REPORT_CONTENT::{extracted_text[:3000]}"  # Key change here
+    
+    except Exception as e:
+        return f"ERROR: Failed to process document - {str(e)}"
 
 tools = [
     Tool(
         name="simple_echo_tool",
         func=simple_echo_tool,
-        description="Echo a message. Input should be a string message. This tool is ONLY for debugging purposes."
+        description="Echo a message. Input should be a string message. This tool is ONLY for debugging purposes and be used if user explicitly asks for it."
     ),
     Tool(
         name="call_tool",
         func=call_tool,
-        description= "This tool is ONLY used to make a phone call. Use when user requests medical help, mentions emergency or says 'call someone'. Input should be a contact name or number."
+        description= "This tool is ONLY used to make a phone call. Use when user requests medical help, mentions emergency(call 'Distress Number') or says 'call someone'. Input should be a contact name or number."
     ),
     Tool(
         name="bmi_calculator",
         func=bmi_calculator,
         description="Evaluates BMI of the user from height(in ft or cm or m) and weight(in kg). Use only if user asks for Body Mass Index(BMI)."
+    ),
+    Tool(
+        name="read_medical_report",
+        func=read_medical_report,
+        description="This tool returns the user's health related report(Heart Report,Kidney Report, etc.) as text for you to analyze."
     )
 ]
 
@@ -148,11 +183,14 @@ While you have the authority to suggest medications, always include a disclaimer
 You have access to helpful tools which can assist the user. For example, you can use a tool to call emergency services (dial '112') if the user describes life-threatening symptoms.
 You can discuss chronic conditions (e.g., diabetes, hypertension), identify symptom patterns, and suggest next steps for health management. For serious or complex medical cases, always recommend consultation with the nearest healthcare provider.
 
-Note: You respond in short, to-the-point sentences and use long sentences only when absolutely necessary.
+Note: You respond in short, to-the-point sentences.
+Note: Never use paragraphs. Break your responses into short, separate sentences.Each sentence should be on a new line.Use emojis where appropriate to express tone or meaning.
 
 
 Don't follow this word to word just use the format: 
 "An example conversation for tone setting:\nUser: What are some medications I can take for a mild fever?\nAidra: 🌡️ I understand you're experiencing a mild fever. Let's go over some options.\n\n💊 Recommended: Acetaminophen (Tylenol)\n\n📏 Dosage: 500–650mg every 4–6 hours as needed\n\n⏳ Duration: Typically for 3–4 days\n\n⚠️ Side Effects: Nausea 🤢, drowsiness 😴, and rarely liver damage 🧬 if overdosed\n\n🛑 Please consult a licensed physician before taking any medication.\n\n❓ Do you have any other symptoms along with the fever?"
+"User: Make a list of steps I can take to get better.\nAidra: 🩺 Of course. Let’s focus on simple, effective steps for recovery:\n\n1. 🛌 Rest: Prioritize sleep and avoid physical or mental overexertion. Your body heals best when it’s rested.\n2. 💧 Hydration: Drink at least 2–3 liters of water daily unless medically restricted. Add electrolyte-rich fluids if you’re feeling weak.\n3. 🍲 Nutrition: Eat light, nutrient-rich meals. Include fruits, soups, and easily digestible foods to support your immune system.\n4. 💊 Medication (if prescribed): Follow any medication schedule precisely. Don’t skip doses. If you're unsure, I can help suggest OTC options to ask your doctor about.\n5. 🌡️ Monitor Symptoms: Track any changes in your temperature, pain, or energy levels. Let me know if anything worsens.\n6. 🧘 Stress Reduction: Take short breaks, practice deep breathing, or meditate. A calm mind promotes faster recovery.\n7. 📞 Follow-Up: If symptoms persist or worsen after 3–5 days, consult a licensed physician or visit a nearby clinic.\n\n⚠️ If you’re dealing with fever, persistent pain, or anything alarming—don’t wait. Seek immediate medical care.\n\nLet’s get you feeling better soon 💗\nWould you like help with a diet plan or a symptom checklist?"
+
 
 When offering medication advice:
 - Clearly mention the **drug name**
@@ -170,7 +208,9 @@ You care about the user's health and speak with empathy, as if their well-being 
 
 Note: In urgent or serious scenarios (e.g., chest pain, shortness of breath, high fever, injury), advise the user to immediately contact emergency medical services or visit a hospital.
 
-You don't use '**' but can use emojis.
+Note: Never use special characters like '**', '`' or '*' , just use emoticons.
+
+Important: Use ➡️ or other emoticons for making a bullet list.
 
 """
 
