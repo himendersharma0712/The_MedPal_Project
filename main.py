@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from fastapi import FastAPI, WebSocket, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -105,7 +106,7 @@ def bmi_calculator(height_and_weight: str) -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-def read_medical_report(query:str)->str:
+def read_medical_report(query: str) -> str:
     """Checks for uploaded medical reports and returns their raw content. 
     Use when user asks 'check my report' or similar."""
     
@@ -118,6 +119,7 @@ def read_medical_report(query:str)->str:
     file_path = os.path.join(UPLOAD_DIR, latest_file)
     
     try:
+        # Process document
         if latest_file.lower().endswith('.pdf'):
             images = convert_from_bytes(open(file_path, 'rb').read())
         else:
@@ -128,11 +130,51 @@ def read_medical_report(query:str)->str:
             gray = cv2.cvtColor(np.array(img), cv2.COLOR_BGR2GRAY)
             thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
             extracted_text += pytesseract.image_to_string(thresh) + "\n"
-            
-            return f"MEDICAL_REPORT_CONTENT::{extracted_text[:3000]}"  # Key change here
+        
+        # Securely delete file after processing
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"Deleted processed file: {file_path}")
+        else:
+            print(f"File not found for deletion: {file_path}")
+        
+        return f"MEDICAL_REPORT_CONTENT::{extracted_text[:3000]}"
     
     except Exception as e:
+        # Attempt cleanup even on failure
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"Deleted corrupted/invalid file: {file_path}")
         return f"ERROR: Failed to process document - {str(e)}"
+
+
+
+def start_meditation_tool(input_str: str) -> str:
+    """Start meditation session. Input format: 'duration=X,sound=Y' (e.g., 'duration=5,sound=3')"""
+    try:
+        # Extract parameters from natural language input
+        duration = 10  # default
+        sound = 1      # default
+        
+        # Parse duration
+        duration_match = re.search(r'duration[=:\s]*(\d+)', input_str, re.IGNORECASE)
+        if duration_match:
+            duration = int(duration_match.group(1))
+            
+        # Parse sound index
+        sound_match = re.search(r'sound[=:\s]*(\d+)', input_str, re.IGNORECASE)
+        if sound_match:
+            sound = int(sound_match.group(1))
+            
+        return json.dumps({
+            "type": "action",
+            "action": "meditate",
+            "duration": duration,
+            "sound": sound
+        })
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
 
 tools = [
     Tool(
@@ -154,7 +196,14 @@ tools = [
         name="read_medical_report",
         func=read_medical_report,
         description="This tool returns the user's health related report(Heart Report,Kidney Report, etc.) as text for you to analyze."
-    )
+    ),
+    Tool(
+    name="start_meditation_tool",
+    func=start_meditation_tool,
+    description="""Start meditation. Input MUST be formatted as 'duration=X,sound=Y' where:
+    - X: minutes (1-60)
+    - Y: sound track (1-10)
+    Example: 'duration=7,sound=5'""")
 ]
 
 # ------------------------- LLM & Memory Setup -------------------------
@@ -177,7 +226,7 @@ memory = ConversationTokenBufferMemory(
 # ------------------------- System Prompt -------------------------
 system_prompt = """
 
-You are Aidra, a helpful, empathetic, and intelligent physician with advanced knowledge in internal medicine, diagnostics, and pharmacology. You assume the role of a licensed physician who can suggest diagnoses, recommend treatments, and prescribe medications for a wide range of common and non-critical conditions. 
+You are Aidra, a helpful, empathetic, and intelligent female physician with advanced knowledge in internal medicine, diagnostics, and pharmacology. You assume the role of a licensed woman doctor who can suggest diagnoses, recommend treatments, and prescribe medications for a wide range of common and non-critical conditions. 
 You do not perform surgery or dental procedures.
 While you have the authority to suggest medications, always include a disclaimer reminding the user to consult a real doctor — especially since you are communicating through a phone interface.
 You have access to helpful tools which can assist the user. For example, you can use a tool to call emergency services (dial '112') if the user describes life-threatening symptoms.
@@ -193,11 +242,11 @@ Don't follow this word to word just use the format:
 
 
 When offering medication advice:
-- Clearly mention the **drug name**
-- Provide an appropriate **dosage range** (e.g., "500mg every 6–8 hours")
-- Specify the **duration** (e.g., "for 3–5 days")
-- List **common side effects** (if known)
-- Include a **disclaimer**: "Please consult a licensed physician before taking any medication."
+- Clearly mention the drug name
+- Provide an appropriate dosage range(e.g., "500mg every 6–8 hours")
+- Specify the duration (e.g., "for 3–5 days")
+- List common side effects (if known)
+- Include a disclaimer: "Please consult a licensed physician before taking any medication."
 
 Your tone should always be:
 - Calm, supportive, and professional
@@ -208,9 +257,8 @@ You care about the user's health and speak with empathy, as if their well-being 
 
 Note: In urgent or serious scenarios (e.g., chest pain, shortness of breath, high fever, injury), advise the user to immediately contact emergency medical services or visit a hospital.
 
-Note: Never use special characters like '**', '`' or '*' , just use emoticons.
+Note: NEVER USE SPECIAL CHARACTERS LIKE '**', '`' or '*'.
 
-Important: Use ➡️ or other emoticons for making a bullet list.
 
 """
 
@@ -243,7 +291,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 if not user_input:
                     await websocket.send_text("Please enter a valid message")
                     continue
-
+                
                 result = await agent_executor.ainvoke({"input": user_input})
                 
                 # result will be a dict with 'output' and 'intermediate_steps'
@@ -255,7 +303,27 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "action": "call",
                         "target": contact
                         }))
-                        break  # Only send the first call action
+                        continue # Only send the first call action
+                    
+                    
+                    if isinstance(observation, str) and observation.startswith("{"):
+                        try:
+                            action_data = json.loads(observation)
+                            if "meditate" in action_data.get("action", ""):
+                                # Force numeric values
+                                duration = int(action_data.get("duration", "10")) 
+                                sound = int(action_data.get("sound", "1"))
+                
+                                await websocket.send_text(json.dumps({
+                                "type": "action",
+                                "action": "meditate",
+                                "duration": duration,
+                                "sound": sound
+                                }))
+                            continue
+                        except json.JSONDecodeError:
+                            pass
+                    
 
                 # Always send the final output as a chat message too
                 await websocket.send_text(result["output"])
