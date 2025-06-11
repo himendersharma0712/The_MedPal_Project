@@ -277,6 +277,11 @@ agent_executor = initialize_agent(
     return_intermediate_steps=True
 )
 
+def sanitize_output(text: str) -> str:
+    # Remove triple backticks and other possible code block markers
+    return text.replace("```", "").replace("~~~", "")
+
+
 # ------------------------- WebSocket Chat Integration -------------------------
 @app.websocket("/ws/chat/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -326,7 +331,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     
 
                 # Always send the final output as a chat message too
-                await websocket.send_text(result["output"])
+                await websocket.send_text(sanitize_output(result["output"]))
 
             except json.JSONDecodeError:
                 await websocket.send_text("Invalid JSON format received ☠️")
