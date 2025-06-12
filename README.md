@@ -28,16 +28,16 @@
 3. The agent uses tools + LLM reasoning to generate an answer.
 4. The app displays the response in a clean chat UI.
 
-## 📎 Note
-
-- This app is not intended to replace professional medical advice.
-- Always consult a licensed healthcare provider for serious conditions.
-
 ## 🙋‍♂️ Developed By
 
 **Himender Sharma** – Lead Developer (Full-stack development, AI agent integration, backend/server setup, UI/UX design, debugging, complete documentation & final report writing)
 
 Contributions: *Ginisha Miglani (HTML pages integration and presentation PPT)*
+
+## 📎 Note
+
+- This app is not intended to replace professional medical advice.
+- Always consult a licensed healthcare provider for serious conditions.
 
 
 
